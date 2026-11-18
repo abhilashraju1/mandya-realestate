@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-teal: #0F766E;
+  --deep-navy: #142B3B;
+  --warm-gold: #E7A33E;
+  --bg-sand: #F5F7F6;
+}
+
+body {
+  background-color: var(--bg-sand);
+  color: var(--deep-navy);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Ensure minimum touch target for mobile usability */
+button, a, input, select {
+  min-height: 44px;
+}
+
+/* Custom scrollbar for horizontal chips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

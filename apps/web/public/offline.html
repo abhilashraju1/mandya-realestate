@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline | Mandya Properties (ಮಂಡ್ಯ ಪ್ರಾಪರ್ಟೀಸ್)</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 24px;
+      background-color: #F5F7F6;
+      color: #142B3B;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 90vh;
+      text-align: center;
+    }
+    .card {
+      background: #FFFFFF;
+      padding: 32px 24px;
+      border-radius: 16px;
+      max-width: 440px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    }
+    .icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 8px 0;
+      color: #0F766E;
+    }
+    h2 {
+      font-size: 18px;
+      margin: 0 0 16px 0;
+      color: #142B3B;
+      font-weight: 500;
+    }
+    p {
+      color: #64748B;
+      line-height: 1.5;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .btn {
+      display: inline-block;
+      background-color: #0F766E;
+      color: #FFFFFF;
+      text-decoration: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📡</div>
+    <h1>You are currently offline</h1>
+    <h2>ನೀವು ಆಫ್‌ಲೈನ್‌ನಲ್ಲಿದ್ದೀರಿ</h2>
+    <p>Please check your mobile data or Wi-Fi connection. Any saved properties remain available in your cache.</p>
+    <a href="/" class="btn" onclick="window.location.reload(); return false;">Try Reconnecting (ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ)</a>
+  </div>
+</body>
+</html>
