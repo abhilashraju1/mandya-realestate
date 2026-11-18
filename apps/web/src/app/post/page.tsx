@@ -1,15 +1,13 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '../../context/LanguageContext';
-import { usePropertyStore } from '../../lib/property-store';
-import { MANDYA_TALUKS, MandyaTaluk, convertArea, calculatePlotDimensionsArea, formatPriceINR } from '@mandya-realestate/shared';
-import { CheckCircle, ArrowRight, ArrowLeft, Building, Upload, Shield } from 'lucide-react';
+import { MANDYA_TALUKS, MandyaTaluk, calculatePlotDimensionsArea, formatPriceINR } from '@mandya-realestate/shared';
+import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Phone } from 'lucide-react';
 
 export default function PostPropertyPage() {
   const router = useRouter();
   const { locale, t } = useLanguage();
-  const { addProperty } = usePropertyStore();
 
   const [step, setStep] = useState(1);
   const [role, setRole] = useState<'OWNER' | 'AGENT' | 'BUILDER'>('OWNER');
@@ -22,9 +20,20 @@ export default function PostPropertyPage() {
   const [priceInr, setPriceInr] = useState(2500000); // 25 Lakh
   const [titleEn, setTitleEn] = useState('');
   const [descEn, setDescEn] = useState('');
-  const [sellerName, setSellerName] = useState('');
-  const [sellerPhone, setSellerPhone] = useState('');
+  const [sellerName, setSellerName] = useState('Raghavendra Gowda');
+  const [sellerPhone, setSellerPhone] = useState('+919845012345');
+  const [otpCode, setOtpCode] = useState('123456');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [createdCode, setCreatedCode] = useState('');
+  const [authToken, setAuthToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const savedToken = localStorage.getItem('mandya_auth_token');
+    if (savedToken) {
+      setAuthToken(savedToken);
+    }
+  }, []);
 
   // Update sqft when plot dimension changes
   const handleDimensionChange = (val: string) => {
@@ -33,61 +42,100 @@ export default function PostPropertyPage() {
     if (sqft) setAreaSqft(sqft);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newId = `prop-${Date.now()}`;
-    const code = `MND-${Math.floor(1000 + Math.random() * 9000)}`;
+    setIsSubmitting(true);
 
-    addProperty({
-      id: newId,
-      propertyCode: code,
-      titleEn: titleEn || `${dimensions} ${category} in ${locality || taluk}`,
-      titleKn: `${locality || taluk} ನಲ್ಲಿ ${dimensions} ಪ್ರಾಪರ್ಟಿ`,
-      descriptionEn: descEn || 'Clear title property in Mandya district.',
-      descriptionKn: 'ಮಂಡ್ಯ ಜಿಲ್ಲೆಯಲ್ಲಿ ಸ್ಪಷ್ಟ ದಾಖಲೆ ಹೊಂದಿರುವ ಆಸ್ತಿ.',
-      category,
-      subType: category === 'PLOT' ? 'RESIDENTIAL_SITE' : 'INDEPENDENT_HOUSE',
-      transactionType: transaction,
-      status: 'PENDING_APPROVAL', // Goes to moderation queue
-      priceInr,
-      isNegotiable: true,
-      location: {
-        id: `loc-${Date.now()}`,
-        taluk,
-        localityEn: locality || 'Town Area',
-        localityKn: locality || 'ಟೌನ್ ಏರಿಯಾ',
-        pinCode: '571401',
-        latitude: 12.524,
-        longitude: 76.895,
-      },
-      addressGranularity: 'APPROXIMATE_RADIUS',
-      fuzzedLatitude: 12.524,
-      fuzzedLongitude: 76.895,
-      areaSqft,
-      plotDimensions: dimensions,
-      waterSource: ['MUNICIPAL_SUPPLY'],
-      approvals: ['MUDA_APPROVED'],
-      media: [
-        {
-          id: `m-${Date.now()}`,
-          url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800',
-          isCover: true,
-          order: 0,
+    try {
+      // 1. Ensure user is authenticated via OTP
+      let token = authToken;
+      if (!token) {
+        // Request and verify OTP in dev mode
+        await fetch('/api/v1/auth/otp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: sellerPhone }),
+        });
+
+        const verifyRes = await fetch('/api/v1/auth/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: sellerPhone, code: otpCode || '123456', name: sellerName, role }),
+        });
+
+        const verifyData = await verifyRes.json();
+        if (!verifyRes.ok) throw new Error(verifyData.error || 'OTP verification failed');
+
+        token = verifyData.token;
+        setAuthToken(token);
+        if (token) {
+          localStorage.setItem('mandya_auth_token', token);
+          localStorage.setItem('mandya_user_profile', JSON.stringify(verifyData.user));
+        }
+      }
+
+      // 2. Submit property to server
+      const payload = {
+        titleEn: titleEn || `${dimensions} ${category} in ${locality || taluk}`,
+        titleKn: `${locality || taluk} ನಲ್ಲಿ ${dimensions} ಪ್ರಾಪರ್ಟಿ`,
+        descriptionEn: descEn || 'Clear title property in Mandya district.',
+        descriptionKn: 'ಮಂಡ್ಯ ಜಿಲ್ಲೆಯಲ್ಲಿ ಸ್ಪಷ್ಟ ದಾಖಲೆ ಹೊಂದಿರುವ ಆಸ್ತಿ.',
+        category,
+        subType: category === 'PLOT' ? 'RESIDENTIAL_SITE' : 'INDEPENDENT_HOUSE',
+        transactionType: transaction,
+        priceInr,
+        isNegotiable: true,
+        location: {
+          id: `loc-${Date.now()}`,
+          taluk,
+          localityEn: locality || 'Town Area',
+          localityKn: locality || 'ಟೌನ್ ಏರಿಯಾ',
+          pinCode: '571401',
+          latitude: 12.524,
+          longitude: 76.895,
         },
-      ],
-      amenities: ['tar_road', 'electricity'],
-      sellerType: role,
-      sellerName: sellerName || 'Mandya Citizen',
-      sellerPhoneMasked: '+91 98XXX XXXXX',
-      sellerPhoneDirect: sellerPhone || '+91 98450 00000',
-      whatsappNumber: sellerPhone || '+919845000000',
-      viewsCount: 1,
-      enquiriesCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+        addressGranularity: 'APPROXIMATE_RADIUS',
+        fuzzedLatitude: 12.524,
+        fuzzedLongitude: 76.895,
+        areaSqft,
+        plotDimensions: dimensions,
+        waterSource: ['MUNICIPAL_SUPPLY'],
+        approvals: ['MUDA_APPROVED'],
+        media: [
+          {
+            id: `m-${Date.now()}`,
+            url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800',
+            isCover: true,
+            order: 0,
+          },
+        ],
+        amenities: ['tar_road', 'electricity'],
+        sellerType: role,
+        sellerName,
+        sellerPhoneMasked: '+91 98XXX XXXXX',
+        sellerPhoneDirect: sellerPhone,
+        whatsappNumber: sellerPhone,
+      };
 
-    setIsSubmitted(true);
+      const res = await fetch('/api/v1/properties', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit listing');
+
+      setCreatedCode(data.property.propertyCode);
+      setIsSubmitted(true);
+    } catch (err: any) {
+      alert(err.message || 'Submission failed');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isSubmitted) {
@@ -96,9 +144,10 @@ export default function PostPropertyPage() {
         <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto mb-4">
           <CheckCircle className="w-8 h-8" />
         </div>
-        <h2 className="text-xl font-extrabold text-navy-900 mb-2">
+        <h2 className="text-xl font-extrabold text-navy-900 mb-1">
           {locale === 'kn' ? 'ಜಾಹೀರಾತು ಯಶಸ್ವಿಯಾಗಿ ಸಲ್ಲಿಸಲಾಗಿದೆ!' : 'Listing Submitted for Moderation!'}
         </h2>
+        <div className="text-sm font-mono font-bold text-teal-800 mb-3">Code: {createdCode}</div>
         <p className="text-xs text-gray-600 mb-6 leading-relaxed">
           {locale === 'kn'
             ? 'ನಿಮ್ಮ ಪ್ರಾಪರ್ಟಿಯನ್ನು ಮಂಡ್ಯ ಪ್ರಾಪರ್ಟೀಸ್ ಅಡ್ಮಿನ್ ತಂಡವು ಪರಿಶೀಲಿಸಿ ಶೀಘ್ರದಲ್ಲೇ ಪ್ರಕಟಿಸುತ್ತದೆ.'
@@ -301,7 +350,7 @@ export default function PostPropertyPage() {
             </div>
           )}
 
-          {/* Step 5: Contact & Submit */}
+          {/* Step 5: Contact, OTP & Submit */}
           {step === 5 && (
             <div className="space-y-4">
               <div>
@@ -316,7 +365,7 @@ export default function PostPropertyPage() {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">Mobile / WhatsApp Number:</label>
+                <label className="text-xs font-bold text-gray-700 block mb-1">Mobile Number (Phone OTP):</label>
                 <input
                   type="tel"
                   required
@@ -326,8 +375,25 @@ export default function PostPropertyPage() {
                   className="w-full p-3 bg-gray-50 border rounded-xl text-xs"
                 />
               </div>
+
+              {!authToken && (
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block mb-1">
+                    Enter OTP Code (Development Mock: 123456):
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    placeholder="123456"
+                    className="w-full p-3 bg-gray-50 border rounded-xl text-xs font-mono font-bold"
+                  />
+                </div>
+              )}
+
               <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-[11px] text-teal-900">
-                Notice: All listings undergo verification before appearing publicly to maintain trust in Mandya Properties.
+                Notice: All listings undergo server verification before appearing publicly to maintain trust in Mandya Properties.
               </div>
             </div>
           )}
@@ -347,10 +413,17 @@ export default function PostPropertyPage() {
 
             <button
               type="submit"
-              className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm"
+              disabled={isSubmitting}
+              className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50"
             >
-              <span>{step === 5 ? t('submit_listing') : 'Next'}</span>
-              <ArrowRight className="w-4 h-4" />
+              {isSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <span>{step === 5 ? t('submit_listing') : 'Next'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         </form>

@@ -1,85 +1,184 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '../context/LanguageContext';
-import { usePropertyStore } from '../lib/property-store';
-import { formatPriceINR, formatAreaDisplay } from '@mandya-realestate/shared';
+import { PropertyListing, formatPriceINR, formatAreaDisplay } from '@mandya-realestate/shared';
 import {
   MapPin, Phone, MessageCircle, Calendar, Heart, Share2, ArrowLeft,
-  CheckCircle, Shield, X
+  CheckCircle, Shield, X, AlertCircle, Loader2
 } from 'lucide-react';
 
 export function PropertyDetailClient({ id }: { id: string }) {
   const router = useRouter();
   const { locale, t } = useLanguage();
-  const { properties, favorites, toggleFavorite, addEnquiry, addSiteVisit } = usePropertyStore();
 
-  const property = properties.find((p) => p.id === id) || properties[0];
+  const [property, setProperty] = useState<PropertyListing | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  const [isSaved, setIsSaved] = useState(false);
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
   const [isEnquiryModalOpen, setIsEnquiryModalOpen] = useState(false);
   const [seekerName, setSeekerName] = useState('');
   const [seekerPhone, setSeekerPhone] = useState('');
   const [enquiryMessage, setEnquiryMessage] = useState('');
   const [visitDate, setVisitDate] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [successToast, setSuccessToast] = useState('');
 
-  if (!property) {
+  // Fetch property from Server API
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetch(`/api/v1/properties/${id}`)
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Property not found or not published');
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (mounted) {
+          setProperty(data.property);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (mounted) {
+          setError(e.message);
+          setLoading(false);
+        }
+      });
+
+    // Check favorite in local or account
+    const saved = localStorage.getItem('mandya_saved_favorites');
+    if (saved) {
+      try {
+        const favs: string[] = JSON.parse(saved);
+        if (favs.includes(id)) setIsSaved(true);
+      } catch (e) {}
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
+
+  const toggleFavorite = () => {
+    const saved = localStorage.getItem('mandya_saved_favorites');
+    let favs: string[] = saved ? JSON.parse(saved) : [];
+    if (favs.includes(id)) {
+      favs = favs.filter((f) => f !== id);
+      setIsSaved(false);
+    } else {
+      favs.push(id);
+      setIsSaved(true);
+    }
+    localStorage.setItem('mandya_saved_favorites', JSON.stringify(favs));
+  };
+
+  const handleEnquirySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!property || !seekerPhone || !seekerName) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/v1/enquiries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: property.id,
+          propertyCode: property.propertyCode,
+          seekerName,
+          seekerPhone,
+          message: enquiryMessage || 'I am interested in this listing.',
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to send enquiry');
+      }
+
+      setIsEnquiryModalOpen(false);
+      setSuccessToast(locale === 'kn' ? 'ನಿಮ್ಮ ವಿಚಾರಣೆ ಕಳುಹಿಸಲಾಗಿದೆ!' : 'Enquiry sent to seller!');
+      setTimeout(() => setSuccessToast(''), 4000);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleVisitSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!property || !visitDate || !seekerPhone) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/v1/site-visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertyId: property.id,
+          propertyCode: property.propertyCode,
+          seekerName,
+          seekerPhone,
+          preferredDate: visitDate,
+          preferredTimeSlot: 'MORNING',
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to request visit');
+      }
+
+      setIsVisitModalOpen(false);
+      setSuccessToast(locale === 'kn' ? 'ಸ್ಥಳ ವೀಕ್ಷಣೆಗೆ ವಿನಂತಿ ಸಲ್ಲಿಸಲಾಗಿದೆ!' : 'Site visit requested successfully!');
+      setTimeout(() => setSuccessToast(''), 4000);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
     return (
-      <div className="p-8 text-center">
-        <p>Loading property details...</p>
+      <div className="min-h-screen bg-[#F5F7F6] flex flex-col items-center justify-center p-8">
+        <Loader2 className="w-8 h-8 text-teal-700 animate-spin mb-3" />
+        <p className="text-sm font-semibold text-gray-600">Loading property details from Mandya marketplace...</p>
       </div>
     );
   }
 
-  const isSaved = favorites.includes(property.id);
+  if (error || !property) {
+    return (
+      <div className="min-h-screen bg-[#F5F7F6] flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-4">
+          <AlertCircle className="w-8 h-8" />
+        </div>
+        <h1 className="text-lg font-bold text-gray-900 mb-2">Property Unavailable</h1>
+        <p className="text-xs text-gray-500 max-w-sm mb-6 leading-relaxed">
+          {error || 'This listing does not exist or has been paused/withdrawn by the moderator or owner.'}
+        </p>
+        <button
+          onClick={() => router.push('/search')}
+          className="bg-teal-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs hover:bg-teal-800 transition-colors"
+        >
+          Browse Active Mandya Properties
+        </button>
+      </div>
+    );
+  }
 
   // WhatsApp Deep Link with property code
   const whatsappText = encodeURIComponent(
     `Hello, I am interested in property ${property.propertyCode} (${property.titleEn}) in ${property.location.localityEn}, Mandya listed on Mandya Properties.`
   );
   const whatsappUrl = `https://wa.me/${property.whatsappNumber.replace(/[^0-9]/g, '')}?text=${whatsappText}`;
-
-  const handleEnquirySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!seekerPhone || !seekerName) return;
-
-    addEnquiry({
-      id: `enq-${Date.now()}`,
-      propertyId: property.id,
-      propertyCode: property.propertyCode,
-      seekerName,
-      seekerPhone,
-      message: enquiryMessage || 'I am interested in this listing.',
-      status: 'NEW',
-      createdAt: new Date().toISOString(),
-    });
-
-    setIsEnquiryModalOpen(false);
-    setSuccessToast(locale === 'kn' ? 'ನಿಮ್ಮ ವಿಚಾರಣೆ ಕಳುಹಿಸಲಾಗಿದೆ!' : 'Enquiry sent to seller!');
-    setTimeout(() => setSuccessToast(''), 4000);
-  };
-
-  const handleVisitSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!visitDate || !seekerPhone) return;
-
-    addSiteVisit({
-      id: `vis-${Date.now()}`,
-      propertyId: property.id,
-      propertyCode: property.propertyCode,
-      seekerName,
-      seekerPhone,
-      preferredDate: visitDate,
-      preferredTimeSlot: 'MORNING',
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    });
-
-    setIsVisitModalOpen(false);
-    setSuccessToast(locale === 'kn' ? 'ಸ್ಥಳ ವೀಕ್ಷಣೆಗೆ ವಿನಂತಿ ಸಲ್ಲಿಸಲಾಗಿದೆ!' : 'Site visit requested successfully!');
-    setTimeout(() => setSuccessToast(''), 4000);
-  };
 
   return (
     <div className="min-h-screen bg-[#F5F7F6] pb-24 md:pb-12">
@@ -103,7 +202,8 @@ export function PropertyDetailClient({ id }: { id: string }) {
           </button>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => toggleFavorite(property.id)}
+              onClick={toggleFavorite}
+              aria-label="Save Property"
               className="p-2 rounded-full border border-gray-200 text-gray-700 hover:text-red-500"
             >
               <Heart className={`w-4 h-4 ${isSaved ? 'fill-red-500 text-red-500' : ''}`} />
@@ -114,6 +214,7 @@ export function PropertyDetailClient({ id }: { id: string }) {
                   navigator.share({ title: property.titleEn, url: window.location.href });
                 }
               }}
+              aria-label="Share Property"
               className="p-2 rounded-full border border-gray-200 text-gray-700 hover:text-teal-700"
             >
               <Share2 className="w-4 h-4" />
@@ -328,9 +429,10 @@ export function PropertyDetailClient({ id }: { id: string }) {
               </div>
               <button
                 type="submit"
-                className="w-full bg-teal-700 text-white font-bold py-2.5 rounded-xl text-xs mt-2"
+                disabled={submitting}
+                className="w-full bg-teal-700 text-white font-bold py-2.5 rounded-xl text-xs mt-2 disabled:opacity-50"
               >
-                Confirm Request
+                {submitting ? 'Submitting...' : 'Confirm Request'}
               </button>
             </form>
           </div>

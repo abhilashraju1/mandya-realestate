@@ -1,19 +1,154 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '../../context/LanguageContext';
-import { usePropertyStore } from '../../lib/property-store';
 import { formatPriceINR } from '@mandya-realestate/shared';
-import { ShieldCheck, Check, X, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Check, X, AlertTriangle, ArrowLeft, Loader2, Lock } from 'lucide-react';
 
 export default function AdminPage() {
   const { locale, t } = useLanguage();
-  const { properties, updatePropertyStatus } = usePropertyStore();
+
+  const [properties, setProperties] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'ALL'>('PENDING');
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+
+  const fetchAdminListings = (token: string) => {
+    setLoading(true);
+    fetch('/api/v1/admin/properties', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Not authorized as admin');
+        return res.json();
+      })
+      .then((data) => {
+        setProperties(data.properties || []);
+        setIsAdmin(true);
+        setLoading(false);
+      })
+      .catch(() => {
+        setIsAdmin(false);
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    const savedToken = localStorage.getItem('mandya_auth_token');
+    const savedProfile = localStorage.getItem('mandya_user_profile');
+    if (savedToken && savedProfile) {
+      try {
+        const u = JSON.parse(savedProfile);
+        if (u.role === 'ADMIN' || u.role === 'MODERATOR') {
+          setAdminToken(savedToken);
+          fetchAdminListings(savedToken);
+          return;
+        }
+      } catch (e) {}
+    }
+    setLoading(false);
+  }, []);
+
+  const handleAdminSignIn = async () => {
+    setLoading(true);
+    try {
+      // Dev Admin Sign-In
+      await fetch('/api/v1/auth/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '+919900011223' }),
+      });
+      const res = await fetch('/api/v1/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '+919900011223', code: '123456', name: 'Mandya Admin', role: 'ADMIN' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setAdminToken(data.token);
+      setIsAdmin(true);
+      localStorage.setItem('mandya_auth_token', data.token);
+      localStorage.setItem('mandya_user_profile', JSON.stringify(data.user));
+      fetchAdminListings(data.token);
+    } catch (e: any) {
+      alert(e.message);
+      setLoading(false);
+    }
+  };
+
+  const handleModerate = async (propId: string, action: 'APPROVE' | 'REJECT' | 'PAUSE') => {
+    if (!adminToken) return;
+    setActionInProgress(propId);
+
+    let reason: string | undefined = undefined;
+    if (action === 'REJECT') {
+      reason = prompt('Please provide reason for rejection (e.g. Incomplete documents, unclear RTC number):') || 'Details need clarification';
+    } else if (action === 'APPROVE') {
+      reason = 'Verified Mandya planning authority documents.';
+    }
+
+    try {
+      const res = await fetch(`/api/v1/admin/properties/${propId}/moderate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ action, reason }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error);
+      }
+
+      const targetStatus = action === 'APPROVE' ? 'PUBLISHED' : action === 'REJECT' ? 'REJECTED' : 'PAUSED';
+      setProperties((prev) =>
+        prev.map((p) => (p.id === propId ? { ...p, status: targetStatus, rejectionReason: reason } : p))
+      );
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F5F7F6] flex flex-col items-center justify-center p-8">
+        <Loader2 className="w-8 h-8 text-teal-700 animate-spin mb-2" />
+        <p className="text-xs text-gray-500">Checking admin authorization...</p>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-[#F5F7F6] py-12 px-4 flex items-center justify-center">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-lg border border-gray-100 text-center">
+          <div className="w-16 h-16 bg-navy-50 text-navy-900 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Lock className="w-8 h-8" />
+          </div>
+          <h1 className="text-xl font-extrabold text-navy-900 mb-2">Admin Authentication Required</h1>
+          <p className="text-xs text-gray-500 mb-6 leading-relaxed">
+            The Moderation Desk is restricted to authorized Mandya Properties reviewers.
+          </p>
+          <button
+            onClick={handleAdminSignIn}
+            className="w-full bg-navy-900 hover:bg-navy-950 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-sm"
+          >
+            Authenticate as Admin (Development Login)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const pendingListings = properties.filter((p) => p.status === 'PENDING_APPROVAL');
   const allListings = properties;
-
-  const [activeTab, setActiveTab] = useState<'PENDING' | 'ALL'>('PENDING');
 
   return (
     <div className="min-h-screen bg-[#F5F7F6] py-8 px-4 pb-24 md:pb-12">
@@ -76,7 +211,7 @@ export default function AdminPage() {
                       {prop.category}
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      prop.status === 'PUBLISHED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      prop.status === 'PUBLISHED' ? 'bg-emerald-100 text-emerald-800' : prop.status === 'REJECTED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
                     }`}>
                       {prop.status}
                     </span>
@@ -88,6 +223,11 @@ export default function AdminPage() {
                   <div className="text-[11px] text-gray-600 mt-1">
                     Seller: <span className="font-bold">{prop.sellerName}</span> ({prop.sellerPhoneDirect})
                   </div>
+                  {prop.rejectionReason && (
+                    <div className="text-[11px] text-red-600 mt-1 font-semibold">
+                      Reason: {prop.rejectionReason}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -96,15 +236,17 @@ export default function AdminPage() {
                 {prop.status !== 'PUBLISHED' ? (
                   <>
                     <button
-                      onClick={() => updatePropertyStatus(prop.id, 'PUBLISHED')}
-                      className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm"
+                      onClick={() => handleModerate(prop.id, 'APPROVE')}
+                      disabled={actionInProgress === prop.id}
+                      className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm disabled:opacity-50"
                     >
                       <Check className="w-4 h-4" />
                       <span>Approve</span>
                     </button>
                     <button
-                      onClick={() => updatePropertyStatus(prop.id, 'REJECTED')}
-                      className="flex-1 sm:flex-none bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm"
+                      onClick={() => handleModerate(prop.id, 'REJECT')}
+                      disabled={actionInProgress === prop.id}
+                      className="flex-1 sm:flex-none bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm disabled:opacity-50"
                     >
                       <X className="w-4 h-4" />
                       <span>Reject</span>
@@ -112,8 +254,9 @@ export default function AdminPage() {
                   </>
                 ) : (
                   <button
-                    onClick={() => updatePropertyStatus(prop.id, 'PAUSED')}
-                    className="flex-1 sm:flex-none bg-gray-200 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs hover:bg-gray-300"
+                    onClick={() => handleModerate(prop.id, 'PAUSE')}
+                    disabled={actionInProgress === prop.id}
+                    className="flex-1 sm:flex-none bg-gray-200 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs hover:bg-gray-300 disabled:opacity-50"
                   >
                     Pause Listing
                   </button>

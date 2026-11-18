@@ -1,14 +1,48 @@
 'use client';
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '../../context/LanguageContext';
-import { usePropertyStore } from '../../lib/property-store';
 import { PropertyCard } from '../../components/PropertyCard';
-import { Heart, Compass } from 'lucide-react';
+import { PropertyListing } from '@mandya-realestate/shared';
+import { INITIAL_PROPERTIES } from '../../lib/mock-data';
+import { Heart, Compass, Loader2 } from 'lucide-react';
 
 export default function SavedPage() {
   const { locale, t } = useLanguage();
-  const { properties, favorites, toggleFavorite } = usePropertyStore();
+
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [properties, setProperties] = useState<PropertyListing[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // 1. Load saved IDs
+    let favIds: string[] = [];
+    const saved = localStorage.getItem('mandya_saved_favorites');
+    if (saved) {
+      try {
+        favIds = JSON.parse(saved);
+      } catch (e) {}
+    }
+    setFavorites(favIds);
+
+    // 2. Fetch all properties from server
+    fetch('/api/v1/properties')
+      .then((res) => res.json())
+      .then((data) => {
+        setProperties(data.properties || INITIAL_PROPERTIES);
+        setLoading(false);
+      })
+      .catch(() => {
+        setProperties(INITIAL_PROPERTIES);
+        setLoading(false);
+      });
+  }, []);
+
+  const toggleFavorite = (id: string) => {
+    const updated = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    setFavorites(updated);
+    localStorage.setItem('mandya_saved_favorites', JSON.stringify(updated));
+  };
 
   const savedProps = properties.filter((p) => favorites.includes(p.id));
 
@@ -27,7 +61,12 @@ export default function SavedPage() {
           </p>
         </div>
 
-        {savedProps.length > 0 ? (
+        {loading ? (
+          <div className="p-12 text-center flex items-center justify-center gap-2 text-xs text-gray-500">
+            <Loader2 className="w-4 h-4 animate-spin text-teal-700" />
+            <span>Loading saved properties...</span>
+          </div>
+        ) : savedProps.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {savedProps.map((prop) => (
               <PropertyCard

@@ -1,21 +1,47 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '../context/LanguageContext';
-import { usePropertyStore } from '../lib/property-store';
 import { PropertyCard } from '../components/PropertyCard';
-import { MANDYA_TALUKS } from '@mandya-realestate/shared';
+import { MANDYA_TALUKS, PropertyListing } from '@mandya-realestate/shared';
+import { INITIAL_PROPERTIES } from '../lib/mock-data';
 import { Search, MapPin, Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
   const { locale, t } = useLanguage();
-  const { properties, favorites, toggleFavorite } = usePropertyStore();
 
+  const [properties, setProperties] = useState<PropertyListing[]>(INITIAL_PROPERTIES);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaluk, setSelectedTaluk] = useState<string>('ALL');
   const [activeIntent, setActiveIntent] = useState<'ALL' | 'BUY' | 'RENT' | 'PLOT' | 'AGRICULTURAL'>('ALL');
+
+  useEffect(() => {
+    // Fetch live published properties from Server API
+    fetch('/api/v1/properties')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.properties && Array.isArray(data.properties)) {
+          setProperties(data.properties);
+        }
+      })
+      .catch(() => {});
+
+    const saved = localStorage.getItem('mandya_saved_favorites');
+    if (saved) {
+      try {
+        setFavorites(JSON.parse(saved));
+      } catch (e) {}
+    }
+  }, []);
+
+  const toggleFavorite = (id: string) => {
+    const updated = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    setFavorites(updated);
+    localStorage.setItem('mandya_saved_favorites', JSON.stringify(updated));
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

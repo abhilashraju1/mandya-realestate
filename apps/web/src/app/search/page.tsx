@@ -1,16 +1,19 @@
 'use client';
-import React, { useState, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLanguage } from '../../context/LanguageContext';
-import { usePropertyStore } from '../../lib/property-store';
 import { PropertyCard } from '../../components/PropertyCard';
-import { MANDYA_TALUKS, formatPriceINR } from '@mandya-realestate/shared';
-import { Filter, SlidersHorizontal, Map, List, X, Search, MapPin } from 'lucide-react';
+import { MANDYA_TALUKS, PropertyListing, formatPriceINR } from '@mandya-realestate/shared';
+import { INITIAL_PROPERTIES } from '../../lib/mock-data';
+import { SlidersHorizontal, Map, List, X, Search, MapPin, Loader2 } from 'lucide-react';
 
 function SearchContent() {
   const searchParams = useSearchParams();
   const { locale, t } = useLanguage();
-  const { properties, favorites, toggleFavorite } = usePropertyStore();
+
+  const [properties, setProperties] = useState<PropertyListing[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [favorites, setFavorites] = useState<string[]>([]);
 
   const [query, setQuery] = useState(searchParams.get('q') || '');
   const [taluk, setTaluk] = useState(searchParams.get('taluk') || 'ALL');
@@ -20,38 +23,50 @@ function SearchContent() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'LIST' | 'MAP'>('LIST');
 
-  // Filter properties
-  const filtered = useMemo(() => {
-    return properties.filter((prop) => {
-      if (prop.status !== 'PUBLISHED') return false;
+  // Fetch properties from Server API based on active filters
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
 
-      // Taluk
-      if (taluk !== 'ALL' && prop.location.taluk !== taluk) return false;
+    const params = new URLSearchParams();
+    if (taluk !== 'ALL') params.set('taluk', taluk);
+    if (transaction !== 'ALL') params.set('transaction', transaction);
+    if (category !== 'ALL') params.set('category', category);
+    if (maxPrice) params.set('maxPrice', maxPrice.toString());
+    if (query.trim()) params.set('q', query.trim());
 
-      // Transaction
-      if (transaction !== 'ALL' && prop.transactionType !== transaction) return false;
+    fetch(`/api/v1/properties?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (mounted) {
+          setProperties(data.properties || INITIAL_PROPERTIES);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setProperties(INITIAL_PROPERTIES);
+          setLoading(false);
+        }
+      });
 
-      // Category
-      if (category !== 'ALL' && prop.category !== category) return false;
+    const saved = localStorage.getItem('mandya_saved_favorites');
+    if (saved) {
+      try {
+        setFavorites(JSON.parse(saved));
+      } catch (e) {}
+    }
 
-      // Max Price
-      if (prop.priceInr > maxPrice) return false;
+    return () => {
+      mounted = false;
+    };
+  }, [taluk, transaction, category, maxPrice, query]);
 
-      // Query (Search in English & Kannada title, locality, code)
-      if (query.trim()) {
-        const q = query.toLowerCase().trim();
-        const matchTitle =
-          prop.titleEn.toLowerCase().includes(q) ||
-          prop.titleKn.includes(q) ||
-          prop.location.localityEn.toLowerCase().includes(q) ||
-          prop.location.localityKn.includes(q) ||
-          prop.propertyCode.toLowerCase().includes(q);
-        if (!matchTitle) return false;
-      }
-
-      return true;
-    });
-  }, [properties, taluk, transaction, category, maxPrice, query]);
+  const toggleFavorite = (id: string) => {
+    const updated = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    setFavorites(updated);
+    localStorage.setItem('mandya_saved_favorites', JSON.stringify(updated));
+  };
 
   const resetFilters = () => {
     setQuery('');
@@ -121,10 +136,15 @@ function SearchContent() {
         {/* Result Counter & Active Filters Display */}
         <div className="flex items-center justify-between mb-4">
           <div className="text-sm font-semibold text-gray-700">
-            {locale === 'kn' ? (
-              <><span className="text-teal-700 font-extrabold">{filtered.length}</span> ಪ್ರಾಪರ್ಟಿಗಳು ಲಭ್ಯವಿವೆ</>
+            {loading ? (
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-700" />
+                <span>Searching properties...</span>
+              </span>
+            ) : locale === 'kn' ? (
+              <><span className="text-teal-700 font-extrabold">{properties.length}</span> ಪ್ರಾಪರ್ಟಿಗಳು ಲಭ್ಯವಿವೆ</>
             ) : (
-              <>Showing <span className="text-teal-700 font-extrabold">{filtered.length}</span> properties</>
+              <>Showing <span className="text-teal-700 font-extrabold">{properties.length}</span> properties</>
             )}
           </div>
           {(taluk !== 'ALL' || transaction !== 'ALL' || category !== 'ALL' || query) && (
@@ -139,9 +159,9 @@ function SearchContent() {
 
         {/* View Mode: List vs Map */}
         {viewMode === 'LIST' ? (
-          filtered.length > 0 ? (
+          properties.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filtered.map((prop) => (
+              {properties.map((prop) => (
                 <PropertyCard
                   key={prop.id}
                   property={prop}
@@ -189,7 +209,7 @@ function SearchContent() {
 
               {/* Pins representation */}
               <div className="relative z-10 w-full h-full p-8 flex flex-wrap gap-8 items-center justify-around">
-                {filtered.map((prop, idx) => (
+                {properties.map((prop) => (
                   <div
                     key={prop.id}
                     className="group relative cursor-pointer"
@@ -341,7 +361,6 @@ function SearchContent() {
     </div>
   );
 }
-
 
 export default function SearchPage() {
   return (
