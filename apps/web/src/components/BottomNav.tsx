@@ -9,6 +9,11 @@ export const BottomNav = () => {
   const pathname = usePathname();
   const { t } = useLanguage();
 
+  // Hide bottom nav on property details page so sticky action bar has full priority
+  if (pathname.startsWith('/property/')) {
+    return null;
+  }
+
   const navItems = [
     { href: '/', label: t('nav_home'), icon: Home },
     { href: '/search', label: t('nav_explore'), icon: Compass },

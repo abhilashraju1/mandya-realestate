@@ -1,0 +1,26 @@
+{
+  "name": "Mandya Properties | ಮಂಡ್ಯ ಪ್ರಾಪರ್ಟೀಸ್",
+  "short_name": "MandyaProp",
+  "description": "Bilingual real estate marketplace for Mandya district, Karnataka. Buy, rent, agricultural land, plots, and commercial spaces.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F7F6",
+  "theme_color": "#0F766E",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

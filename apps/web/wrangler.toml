@@ -1,0 +1,17 @@
+name = "mandya-properties"
+compatibility_date = "2026-11-18"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "out"
+
+[vars]
+NEXT_PUBLIC_APP_NAME = "Mandya Properties"
+NEXT_PUBLIC_APP_NAME_KN = "ಮಂಡ್ಯ ಪ್ರಾಪರ್ಟೀಸ್"
+NEXT_PUBLIC_DEFAULT_LOCALE = "en"
+NEXT_PUBLIC_PRIMARY_DISTRICT = "Mandya"
+NEXT_PUBLIC_API_URL = "/api/v1"
+
+# Cloudflare R2 Storage for Property Photos & Moderation Documents
+[[r2_buckets]]
+binding = "PROPERTY_MEDIA"
+bucket_name = "mandya-properties-media"
+preview_bucket_name = "mandya-properties-media-preview"
