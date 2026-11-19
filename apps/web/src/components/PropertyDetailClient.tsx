@@ -8,12 +8,12 @@ import {
   CheckCircle, Shield, X, AlertCircle, Loader2
 } from 'lucide-react';
 
-export function PropertyDetailClient({ id }: { id: string }) {
+export function PropertyDetailClient({ id, initialProperty }: { id: string; initialProperty?: PropertyListing }) {
   const router = useRouter();
   const { locale, t } = useLanguage();
 
-  const [property, setProperty] = useState<PropertyListing | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [property, setProperty] = useState<PropertyListing | null>(initialProperty || null);
+  const [loading, setLoading] = useState(!initialProperty);
   const [error, setError] = useState<string | null>(null);
 
   const [isSaved, setIsSaved] = useState(false);
@@ -26,8 +26,14 @@ export function PropertyDetailClient({ id }: { id: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [successToast, setSuccessToast] = useState('');
 
-  // Fetch property from Server API
+  // Fetch property from Server API if not provided via initialProperty
   useEffect(() => {
+    if (initialProperty) {
+      setProperty(initialProperty);
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
     setLoading(true);
     fetch(`/api/v1/properties/${id}`)

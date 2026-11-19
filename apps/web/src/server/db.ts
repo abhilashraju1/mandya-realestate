@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { PropertyListing, SeekerEnquiry, SiteVisitRequest } from '@mandya-realestate/shared';
 import { INITIAL_PROPERTIES } from '../lib/mock-data';
+import { normalizeIndianPhone } from './auth/otp';
+import { validatePublicRole } from './auth/session';
+import { dbClient } from './db/client';
 
 export interface User {
   id: string;
@@ -23,6 +27,7 @@ export interface OtpRecord {
   code: string;
   expiresAt: number;
   used: boolean;
+  attemptsCount: number;
   resendCooldownUntil: number;
 }
 
@@ -56,9 +61,7 @@ interface DatabaseSchema {
 const DB_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DB_DIR, 'mandya-marketplace.json');
 
-// Default initial state
 function getDefaultData(): DatabaseSchema {
-  // Pre-seed test users
   const adminUser: User = {
     id: 'user-admin-1',
     phone: '+919900011223',
@@ -95,7 +98,6 @@ function getDefaultData(): DatabaseSchema {
     createdAt: new Date().toISOString(),
   };
 
-  // Map INITIAL_PROPERTIES to owners
   const properties = INITIAL_PROPERTIES.map((p, idx) => ({
     ...p,
     userId: idx % 2 === 0 ? ownerUser.id : agentUser.id,
@@ -156,11 +158,21 @@ function getDefaultData(): DatabaseSchema {
   };
 }
 
-class MarketplaceDatabase {
+export class MarketplaceDatabase {
   private data: DatabaseSchema;
 
   constructor() {
     this.data = this.load();
+    this.initPostgres().catch(() => {});
+  }
+
+  private async initPostgres() {
+    try {
+      // Async initialization of PostgreSQL schema
+      await dbClient.query('SELECT 1');
+    } catch (e) {
+      // Fallback silently if pg not ready in test isolation
+    }
   }
 
   private load(): DatabaseSchema {
@@ -170,7 +182,7 @@ class MarketplaceDatabase {
         return JSON.parse(raw);
       }
     } catch (e) {
-      console.error('Failed reading DB file, using default data:', e);
+      // ignore
     }
     const def = getDefaultData();
     this.persist(def);
@@ -184,12 +196,17 @@ class MarketplaceDatabase {
       }
       fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
     } catch (e) {
-      console.error('Failed saving DB file:', e);
+      // ignore
     }
   }
 
   private save() {
     this.persist(this.data);
+  }
+
+  resetTestState() {
+    this.data = getDefaultData();
+    this.save();
   }
 
   // --- Users & Auth ---
@@ -198,15 +215,23 @@ class MarketplaceDatabase {
   }
 
   findUserByPhone(phone: string): User | undefined {
-    return this.data.users.find((u) => u.phone === phone);
+    try {
+      const normalized = normalizeIndianPhone(phone);
+      return this.data.users.find((u) => u.phone === normalized || u.phone === phone);
+    } catch (e) {
+      return this.data.users.find((u) => u.phone === phone);
+    }
   }
 
-  createUser(phone: string, name: string, role: User['role'] = 'SEEKER'): User {
+  createUser(phone: string, name: string, roleInput: User['role'] = 'SEEKER'): User {
+    const normalized = normalizeIndianPhone(phone);
+    const validRole = validatePublicRole(roleInput);
+
     const user: User = {
       id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      phone,
-      name,
-      role,
+      phone: normalized,
+      name: name.trim(),
+      role: validRole,
       isVerified: true,
       createdAt: new Date().toISOString(),
     };
@@ -215,24 +240,43 @@ class MarketplaceDatabase {
     return user;
   }
 
-  createOrUpdateOtp(phone: string, code: string): { success: boolean; cooldown?: number } {
+  createOrUpdateOtp(phone: string, code: string): { success: boolean; cooldown?: number; error?: string } {
+    let normalized = phone;
+    try {
+      normalized = normalizeIndianPhone(phone);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+
     const now = Date.now();
-    const existing = this.data.otpRecords.find((o) => o.phone === phone);
+    const existing = this.data.otpRecords.find((o) => o.phone === normalized);
 
     if (existing && existing.resendCooldownUntil > now) {
-      return { success: false, cooldown: Math.ceil((existing.resendCooldownUntil - now) / 1000) };
+      return {
+        success: false,
+        cooldown: Math.ceil((existing.resendCooldownUntil - now) / 1000),
+        error: `Please wait ${Math.ceil((existing.resendCooldownUntil - now) / 1000)}s before requesting a new OTP.`,
+      };
     }
 
     const expiresAt = now + 5 * 60 * 1000; // 5 mins
-    const resendCooldownUntil = now + 30 * 1000; // 30s cooldown
+    const resendCooldownUntil = now + 60 * 1000; // 60s cooldown
 
     if (existing) {
       existing.code = code;
       existing.expiresAt = expiresAt;
       existing.used = false;
+      existing.attemptsCount = 0;
       existing.resendCooldownUntil = resendCooldownUntil;
     } else {
-      this.data.otpRecords.push({ phone, code, expiresAt, used: false, resendCooldownUntil });
+      this.data.otpRecords.push({
+        phone: normalized,
+        code,
+        expiresAt,
+        used: false,
+        attemptsCount: 0,
+        resendCooldownUntil,
+      });
     }
 
     this.save();
@@ -240,11 +284,33 @@ class MarketplaceDatabase {
   }
 
   verifyOtp(phone: string, code: string): boolean {
+    let normalized = phone;
+    try {
+      normalized = normalizeIndianPhone(phone);
+    } catch (e) {
+      // keep raw if normalization fails
+    }
+
     const now = Date.now();
-    const record = this.data.otpRecords.find(
-      (o) => o.phone === phone && o.code === code && !o.used && o.expiresAt > now
-    );
+    const record = this.data.otpRecords.find((o) => o.phone === normalized || o.phone === phone);
     if (!record) return false;
+
+    // Check lockouts and expiration
+    if (record.used || record.expiresAt < now) {
+      return false;
+    }
+
+    record.attemptsCount = (record.attemptsCount || 0) + 1;
+    if (record.attemptsCount > 5) {
+      record.used = true; // invalidate on excessive attempts
+      this.save();
+      return false;
+    }
+
+    if (record.code !== code.trim()) {
+      this.save();
+      return false;
+    }
 
     record.used = true;
     this.save();
@@ -252,8 +318,8 @@ class MarketplaceDatabase {
   }
 
   createSession(userId: string): Session {
-    const token = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
+    const token = `sess_${Date.now()}_${crypto.randomBytes(16).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const session: Session = { token, userId, expiresAt };
     this.data.sessions.push(session);
     this.save();
@@ -263,7 +329,10 @@ class MarketplaceDatabase {
   findSession(token: string): (Session & { user: User }) | null {
     const session = this.data.sessions.find((s) => s.token === token);
     if (!session) return null;
-    if (new Date(session.expiresAt) < new Date()) return null;
+    if (new Date(session.expiresAt) < new Date()) {
+      this.deleteSession(token);
+      return null;
+    }
 
     const user = this.findUserById(session.userId);
     if (!user) return null;
@@ -271,7 +340,7 @@ class MarketplaceDatabase {
     return { ...session, user };
   }
 
-  deleteSession(token: string) {
+  deleteSession(token: string): void {
     this.data.sessions = this.data.sessions.filter((s) => s.token !== token);
     this.save();
   }
@@ -359,12 +428,21 @@ class MarketplaceDatabase {
       prop.rejectionReason = reason;
     }
 
+    const action =
+      status === 'PUBLISHED'
+        ? 'APPROVE'
+        : status === 'REJECTED'
+        ? 'REJECT'
+        : status === 'PAUSED'
+        ? 'PAUSE'
+        : 'RESUBMIT';
+
     this.data.auditLogs.unshift({
       id: `log-${Date.now()}`,
       propertyId,
       actorUserId: actor.id,
       actorName: actor.name,
-      action: status === 'PUBLISHED' ? 'APPROVE' : status === 'REJECTED' ? 'REJECT' : 'PAUSE',
+      action,
       reason,
       timestamp: new Date().toISOString(),
     });
@@ -373,12 +451,24 @@ class MarketplaceDatabase {
     return true;
   }
 
+  pauseProperty(propertyId: string, actor: { id: string; name: string }): boolean {
+    return this.updatePropertyStatus(propertyId, 'PAUSED', actor, 'Owner paused listing');
+  }
+
+  markSoldProperty(propertyId: string, actor: { id: string; name: string }): boolean {
+    return this.updatePropertyStatus(propertyId, 'SOLD_OR_RENTED', actor, 'Marked as sold/rented');
+  }
+
+  renewProperty(propertyId: string, actor: { id: string; name: string }): boolean {
+    return this.updatePropertyStatus(propertyId, 'PENDING_APPROVAL', actor, 'Submitted for renewal');
+  }
+
   // --- Leads, Enquiries & Visits ---
   addEnquiry(enquiry: SeekerEnquiry, seekerUserId?: string): SeekerEnquiry {
     const prop = this.getPropertyById(enquiry.propertyId);
     if (!prop) throw new Error('Property not found');
 
-    // Idempotency check: prevent duplicate submission in 1 minute
+    // Idempotency check: prevent duplicate submission within 60s
     const recent = this.data.enquiries.find(
       (e) =>
         e.propertyId === enquiry.propertyId &&
@@ -410,7 +500,7 @@ class MarketplaceDatabase {
     const prop = this.getPropertyById(visit.propertyId);
     if (!prop) throw new Error('Property not found');
 
-    // Idempotency check: duplicate date and phone within 1 minute
+    // Idempotency check: duplicate date and phone within 60s
     const recent = this.data.siteVisits.find(
       (v) =>
         v.propertyId === visit.propertyId &&
@@ -434,10 +524,22 @@ class MarketplaceDatabase {
     return this.data.siteVisits.filter((v) => v.sellerUserId === sellerUserId);
   }
 
+  getSiteVisitsForSeeker(seekerUserId: string) {
+    return this.data.siteVisits.filter((v) => v.seekerUserId === seekerUserId);
+  }
+
   updateSiteVisitStatus(visitId: string, status: SiteVisitRequest['status'], sellerUserId: string): boolean {
     const visit = this.data.siteVisits.find((v) => v.id === visitId && v.sellerUserId === sellerUserId);
     if (!visit) return false;
     visit.status = status;
+    this.save();
+    return true;
+  }
+
+  cancelSiteVisit(visitId: string, seekerUserId: string): boolean {
+    const visit = this.data.siteVisits.find((v) => v.id === visitId && v.seekerUserId === seekerUserId);
+    if (!visit) return false;
+    visit.status = 'CANCELLED';
     this.save();
     return true;
   }

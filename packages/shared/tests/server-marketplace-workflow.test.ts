@@ -7,6 +7,10 @@ describe('Server Marketplace — Full Lifecycle & Permission Boundaries', () => 
   const TEST_ADMIN_PHONE = '+919900011223';
   const TEST_SEEKER_PHONE = '+919740011223';
 
+  beforeEach(() => {
+    db.resetTestState();
+  });
+
   it('1. Mobile OTP: sends rate-limited OTP and verifies with single-use session', () => {
     // Send OTP
     const sendResult = db.createOrUpdateOtp(TEST_OWNER_PHONE, '123456');
@@ -187,5 +191,48 @@ describe('Server Marketplace — Full Lifecycle & Permission Boundaries', () => 
     // Restore to published for subsequent tests
     const admin = db.findUserByPhone(TEST_ADMIN_PHONE)!;
     db.updatePropertyStatus(testPropId, 'PUBLISHED', { id: admin.id, name: admin.name });
+  });
+
+  it('6. Defensive Security: Public role escalation prevention', () => {
+    // Normal registration cannot grant ADMIN or MODERATOR - throws clear error
+    expect(() => db.createUser('+919844001122', 'Regular User', 'ADMIN' as any)).toThrow(
+      'Administrative and Moderator roles cannot be selected'
+    );
+  });
+
+  it('7. Indian Phone Normalization & Validation', () => {
+    // Accepts 10-digit without +91 and normalizes
+    const res = db.createOrUpdateOtp('9845999888', '123456');
+    expect(res.success).toBe(true);
+
+    // Rejects invalid phone numbers
+    const invalidRes = db.createOrUpdateOtp('12345', '123456');
+    expect(invalidRes.success).toBe(false);
+    expect(invalidRes.error).toBeDefined();
+  });
+
+  it('8. Brute-force Protection: Maximum 5 failed OTP attempts locks out code', () => {
+    const testPhone = '+919880011223';
+    db.createOrUpdateOtp(testPhone, '654321');
+
+    // 5 failed attempts
+    for (let i = 0; i < 5; i++) {
+      const failed = db.verifyOtp(testPhone, '000000');
+      expect(failed).toBe(false);
+    }
+
+    // 6th attempt with CORRECT code should still fail due to lockout
+    const lockedOut = db.verifyOtp(testPhone, '654321');
+    expect(lockedOut).toBe(false);
+  });
+
+  it('9. Session Revocation on Logout', () => {
+    const seeker = db.findUserByPhone(TEST_SEEKER_PHONE)!;
+    const session = db.createSession(seeker.id);
+    expect(db.findSession(session.token)).not.toBeNull();
+
+    // Revoke session on logout
+    db.deleteSession(session.token);
+    expect(db.findSession(session.token)).toBeNull();
   });
 });

@@ -1,14 +1,16 @@
 import subprocess, time, urllib.request, json, sys, os, urllib.parse
 
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = 3100
-print(f"--- Starting Next.js Production Server on port {PORT} for Live E2E Smoke Test ---")
+print(f"--- Starting Next.js Production Server on port {PORT} for Portable Live E2E Smoke Test ---")
 env = os.environ.copy()
 env["PORT"] = str(PORT)
+env["ALLOW_MOCK_AUTH"] = "true"
 
-# Start server
+# Start server from repository root
 proc = subprocess.Popen(
     ["pnpm", "--filter", "@mandya-realestate/web", "start", "-p", str(PORT)],
-    cwd="/home/5296658037_0/.gemini/antigravity/scratch/mandya-realestate",
+    cwd=REPO_ROOT,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     env=env
@@ -72,7 +74,7 @@ record("3. Public Properties API (/api/v1/properties)", s3 == 200 and data3.get(
 
 # 4. OTP Request & Verification
 s4, c4 = make_req("/api/v1/auth/otp/send", method="POST", data={"phone": "+919845012345"})
-record("4. Send Mobile OTP", s4 == 200)
+record("4. Send Mobile OTP with Phone Normalization", s4 == 200)
 
 s5, c5 = make_req("/api/v1/auth/otp/verify", method="POST", data={"phone": "+919845012345", "code": "123456"})
 data5 = json.loads(c5) if s5 == 200 else {}
@@ -156,11 +158,19 @@ data12 = json.loads(c12) if s12 == 200 else {}
 matching_after = [p for p in data12.get("properties", []) if p.get("id") == created_prop_id]
 record("12. Newly approved property appears in public search immediately", s12 == 200 and len(matching_after) == 1)
 
-# 13. Dynamic Shareable URL Resolution on fresh session (No Rebuild Needed)
-s13, _ = make_req(f"/property/{created_prop_id}")
-record("13. Direct detail URL (/property/[id]) renders dynamically at runtime", s13 == 200)
+# 13. Dynamic Shareable URL Resolution on fresh session (No Rebuild Needed) & SSR Title check
+s13, c13 = make_req(f"/property/{created_prop_id}")
+record("13. Direct detail URL (/property/[id]) renders dynamically with Title in initial HTML", s13 == 200 and new_prop_title in c13)
 
-# 14. Seeker Enquiry Submission & Idempotent Retry
+# 14. Missing Property returns HTTP 404
+s14_missing, _ = make_req("/property/non-existent-prop-999")
+record("14. Unavailable property URL returns HTTP 404", s14_missing == 404)
+
+# 15. Publication-aware Sitemap
+s15_sitemap, c15_sitemap = make_req("/sitemap.xml")
+record("15. Publication-aware sitemap (/sitemap.xml) includes approved listing", s15_sitemap == 200 and created_prop_id in c15_sitemap)
+
+# 16. Seeker Enquiry Submission & Idempotent Retry
 enq_payload = {
     "propertyId": created_prop_id,
     "propertyCode": created_prop.get("propertyCode", "MND-TEST"),
@@ -168,25 +178,38 @@ enq_payload = {
     "seekerPhone": "+919740011223",
     "message": "Interested in purchasing."
 }
-s14, c14 = make_req("/api/v1/enquiries", method="POST", data=enq_payload)
-enq_id1 = json.loads(c14).get("enquiry", {}).get("id") if s14 == 201 else None
+s16, c16 = make_req("/api/v1/enquiries", method="POST", data=enq_payload)
+enq_id1 = json.loads(c16).get("enquiry", {}).get("id") if s16 == 201 else None
 
 # Retry with same phone & property
-s14_retry, c14_retry = make_req("/api/v1/enquiries", method="POST", data=enq_payload)
-enq_id2 = json.loads(c14_retry).get("enquiry", {}).get("id") if s14_retry == 201 else None
+s16_retry, c16_retry = make_req("/api/v1/enquiries", method="POST", data=enq_payload)
+enq_id2 = json.loads(c16_retry).get("enquiry", {}).get("id") if s16_retry == 201 else None
 
-record("14. Enquiry Lead submission persists with retry idempotency (no duplicate)", s14 == 201 and enq_id1 == enq_id2)
+record("16. Enquiry Lead submission persists with retry idempotency (no duplicate)", s16 == 201 and enq_id1 == enq_id2)
 
-# 15. Data Isolation: Listing Owner sees the lead; unrelated user does not
-s15_owner, c15_owner = make_req("/api/v1/enquiries/my", token=owner_token)
-data15_owner = json.loads(c15_owner) if s15_owner == 200 else {}
-has_lead = any(e.get("propertyId") == created_prop_id for e in data15_owner.get("received", []))
+# 17. Data Isolation: Listing Owner sees the lead; unrelated user does not
+s17_owner, c17_owner = make_req("/api/v1/enquiries/my", token=owner_token)
+data17_owner = json.loads(c17_owner) if s17_owner == 200 else {}
+has_lead = any(e.get("propertyId") == created_prop_id for e in data17_owner.get("received", []))
 
-s15_other, c15_other = make_req("/api/v1/enquiries/my", token=admin_token)
-data15_other = json.loads(c15_other) if s15_other == 200 else {}
-other_has_lead = any(e.get("propertyId") == created_prop_id for e in data15_other.get("received", []))
+s17_other, c17_other = make_req("/api/v1/enquiries/my", token=admin_token)
+data17_other = json.loads(c17_other) if s17_other == 200 else {}
+other_has_lead = any(e.get("propertyId") == created_prop_id for e in data17_other.get("received", []))
 
-record("15. Data Isolation: Only listing owner receives lead (unrelated accounts cannot see)", has_lead and not other_has_lead)
+record("17. Data Isolation: Only listing owner receives lead (unrelated accounts cannot see)", has_lead and not other_has_lead)
+
+# 18. Seller Pause Action
+s18_pause, _ = make_req(f"/api/v1/properties/{created_prop_id}", method="PATCH", data={"status": "PAUSED"}, token=owner_token)
+# Paused property should leave public search
+s18_search, c18_search = make_req(f"/api/v1/properties?q={urllib.parse.quote(new_prop_title)}")
+data18 = json.loads(c18_search) if s18_search == 200 else {}
+paused_in_search = any(p.get("id") == created_prop_id for p in data18.get("properties", []))
+record("18. Owner Pauses Listing: Successfully transitions to PAUSED and leaves public search", s18_pause == 200 and not paused_in_search)
+
+# 19. Logout and Session Revocation
+s19_logout, _ = make_req("/api/v1/auth/logout", method="POST", token=owner_token)
+s19_auth_check, _ = make_req("/api/v1/auth/me", token=owner_token)
+record("19. Logout & Session Revocation: Token is revoked immediately", s19_logout == 200 and s19_auth_check == 401)
 
 # Clean up server
 proc.terminate()
@@ -194,7 +217,7 @@ print("\n--- Summary of Live E2E Smoke Tests ---")
 all_passed = all(cond for _, cond, _ in test_results)
 print(f"Total Tests: {len(test_results)} | Passed: {sum(1 for _, c, _ in test_results if c)} | Failed: {sum(1 for _, c, _ in test_results if not c)}")
 if all_passed:
-    print(">>> ALL 15 LIVE E2E SMOKE TESTS PASSED CONFIRMED! <<<")
+    print(f">>> ALL {len(test_results)} PORTABLE LIVE E2E SMOKE TESTS PASSED CONFIRMED! <<<")
     sys.exit(0)
 else:
     print(">>> SOME TESTS FAILED! <<<")

@@ -1,7 +1,31 @@
+# Dependencies
 node_modules
+.pnpm-store
+
+# Build output
 .next
 dist
 build
 .turbo
+*.tsbuildinfo
+
+# Runtime, Data and Databases
+.data/
+apps/web/.data/
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs and temporary files
 *.log
 .DS_Store
+backups/
+*.tmp

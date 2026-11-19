@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/server/db';
 import { getAuthenticatedUser } from '@/app/api/v1/_lib/auth';
+import { toPublicProperties } from '@/server/transformers/public';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -13,7 +14,7 @@ export async function GET(req: Request) {
   const results = db.getPublishedProperties({ taluk, transaction, category, maxPrice, query });
   return NextResponse.json({
     total: results.length,
-    properties: results,
+    properties: toPublicProperties(results),
   });
 }
 

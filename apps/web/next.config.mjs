@@ -5,6 +5,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  experimental: {
+    serverComponentsExternalPackages: ['@electric-sql/pglite', 'pg'],
+  },
 };
 
 export default nextConfig;
